@@ -63,54 +63,58 @@ CATEGORIES = {
 }
 
 ALL_NICHES = [
-    {"name": "будівництво ангарів та складів", "cat": "construction", "product": "site_calc"},
-    {"name": "монтаж сонячних електростанцій", "cat": "construction", "product": "site_calc"},
-    {"name": "буріння свердловин на воду", "cat": "construction", "product": "site_calc"},
-    {"name": "монтаж септиків та автономної каналізації", "cat": "construction", "product": "landing_page"},
-    {"name": "утеплення фасадів та пінополіуретан", "cat": "construction", "product": "site_calc"},
-    {"name": "будівництво басейнів та купелей", "cat": "construction", "product": "portfolio_site"},
-    {"name": "монтаж автополиву та ландшафт", "cat": "construction", "product": "site_calc"},
-    {"name": "промислова епоксидна підлога", "cat": "construction", "product": "b2b_landing"},
-    {"name": "монтаж опалення та теплових насосів", "cat": "construction", "product": "site_calc"},
-    {"name": "дизайн інтер'єру преміум", "cat": "construction", "product": "portfolio_site"},
+    # --- СТРОИТЕЛЬСТВО И РЕМОНТ (Качественный сегмент) ---
+    {"name": "ремонт квартир під ключ", "cat": "construction", "product": "site_calc"},
+    {"name": "монтаж та продаж сонячних станцій", "cat": "construction", "product": "site_calc"},
+    {"name": "будівництво каркасних будинків", "cat": "construction", "product": "portfolio_site"},
+    {"name": "установка теплових насосів та опалення", "cat": "construction", "product": "site_calc"},
+    {"name": "монтаж натяжних стель", "cat": "construction", "product": "bot_calc"},
+    {"name": "дизайн інтер'єру та ремонт", "cat": "construction", "product": "portfolio_site"},
+    {"name": "буріння свердловин на воду", "cat": "construction", "product": "landing_page"},
+    {"name": "виготовлення та монтаж алюмінієвих вікон і дверей", "cat": "construction", "product": "site_calc"},
 
-    {"name": "послуги евакуатора цілодобово", "cat": "auto", "product": "fast_landing_bot"},
-    {"name": "вантажоперевезення та квартирні переїзди", "cat": "auto", "product": "bot_calc"},
-    {"name": "детейлінг та обклеювання авто плівкою", "cat": "auto", "product": "site_calc"},
-    {"name": "автопідбір під ключ", "cat": "auto", "product": "bot_quiz"},
-    {"name": "приганяння авто з США та Європи", "cat": "auto", "product": "site_calc"},
-    {"name": "викуп авто після ДТП", "cat": "auto", "product": "fast_bot_estimate"},
-    {"name": "ремонт АКПП та варіаторів", "cat": "auto", "product": "landing_page"},
-    {"name": "оренда спецтехніки екскаватор кран", "cat": "auto", "product": "bot_catalog"},
+    # --- АВТО И СПЕЦТЕХНИКА (Нормальный бизнес) ---
+    {"name": "детейлінг та захисні плівки", "cat": "auto", "product": "site_calc"},
+    {"name": "автопідбір під ключ з Європи та США", "cat": "auto", "product": "bot_quiz"},
+    {"name": "оренда комерційної спецтехніки", "cat": "auto", "product": "bot_catalog"},
+    {"name": "чип-тюнінг та ретрофіт фар", "cat": "auto", "product": "landing_page"},
+    {"name": "реставрація та перетяжка салону авто", "cat": "auto", "product": "photo_estimate_bot"},
 
-    {"name": "військовий адвокат консультація", "cat": "b2b", "product": "quiz_bot"},
-    {"name": "адвокат з ДТП та позбавлення прав", "cat": "b2b", "product": "quiz_bot"},
-    {"name": "банкрутство фізичних осіб", "cat": "b2b", "product": "landing_calc"},
-    {"name": "бухгалтерський аутсорсинг FOP ТОВ", "cat": "b2b", "product": "site_calc"},
-    {"name": "митно брокерські послуги", "cat": "b2b", "product": "b2b_landing"},
-    {"name": "допомога в отриманні грантів бізнесу", "cat": "b2b", "product": "quiz_bot"},
-    {"name": "впровадження CRM систем BAS", "cat": "b2b", "product": "b2b_landing"},
+    # --- ПРОДАЖУ: ТОВАРКА, МОТО, АВТО, ДРОПШИППІНГ (E-commerce) ---
+    {"name": "продаж мотоциклів та скутерів", "cat": "ecommerce", "product": "bot_catalog"},
+    {"name": "продаж квадроциклів та електротранспорту", "cat": "ecommerce", "product": "site_calc"},
+    {"name": "магазин запчастин та аксесуарів для авто", "cat": "ecommerce", "product": "site_calc"},
+    {"name": "товарка дропшиппінг гаджети та електроніка", "cat": "ecommerce", "product": "bot_catalog"},
+    {"name": "продаж тактичного спорядження та екіпіровки", "cat": "ecommerce", "product": "bot_catalog"},
+    {"name": "магазин брендового одягу та взуття дроп", "cat": "ecommerce", "product": "site_calc"},
+    {"name": "продаж таунхаусів від забудовника", "cat": "ecommerce", "product": "portfolio_site"},
 
-    {"name": "прокат будівельного інструменту", "cat": "services", "product": "bot_catalog"},
-    {"name": "подобова оренда квартир апартаменти", "cat": "services", "product": "booking_bot"},
-    {"name": "оренда авто без водія", "cat": "services", "product": "bot_catalog"},
-    {"name": "хімчистка меблів та килимів з виїздом", "cat": "services", "product": "photo_estimate_bot"},
-    {"name": "дезинфекція дератизація знищення клопів", "cat": "services", "product": "landing_page"},
-    {"name": "вивіз будівельного сміття хлам", "cat": "services", "product": "bot_calc"},
-    {"name": "монтаж та обслуговування відеонагляду", "cat": "services", "product": "site_calc"},
+    # --- B2B И УСЛУГИ ДЛЯ БИЗНЕСА ---
+    {"name": "бухгалтерський аутсорсинг для ФОП і ТОВ", "cat": "b2b", "product": "site_calc"},
+    {"name": "впровадження CRM та автоматизація бізнесу", "cat": "b2b", "product": "b2b_landing"},
+    {"name": "рекрутингове агентство та підбір персоналу", "cat": "b2b", "product": "b2b_landing"},
+    {"name": "оренда рекламних білбордів тасілайтів", "cat": "b2b", "product": "bot_catalog"},
+    {"name": "складський аутсорсинг та фулфілмент", "cat": "b2b", "product": "b2b_landing"},
 
-    {"name": "наркологічна клініка виклики 24/7", "cat": "med", "product": "anonymous_bot"},
-    {"name": "реабілітаційний центр залежності", "cat": "med", "product": "landing_page"},
-    {"name": "стоматологічна імплантація вініри", "cat": "med", "product": "booking_bot"},
-    {"name": "центр МРТ та КТ діагностики", "cat": "med", "product": "booking_bot"},
-    {"name": "служба ритуальних послуг 24/7", "cat": "med", "product": "fast_landing_bot"}
+    # --- БЫТОВЫЕ И DIGITAL УСЛУГИ ---
+    {"name": "меблі на замовлення кухні шафи", "cat": "services", "product": "site_calc"},
+    {"name": "професійна хімчистка меблів вдома", "cat": "services", "product": "photo_estimate_bot"},
+    {"name": "генеральний клінінг квартир і офісів", "cat": "services", "product": "bot_calc"},
+    {"name": "монтаж систем відеонагляду та безпеки", "cat": "services", "product": "site_calc"},
+    {"name": "виготовлення корпусних меблів", "cat": "services", "product": "portfolio_site"},
+
+    # --- МЕДИЦИНА И КРАСОТА (Премиум сегмент) ---
+    {"name": "стоматологія імплантація та брекети", "cat": "med", "product": "booking_bot"},
+    {"name": "офтальмологічна клініка лазерна корекція", "cat": "med", "product": "booking_bot"},
+    {"name": "косметологія та апаратна епіляція", "cat": "med", "product": "booking_bot"},
+    {"name": "приватний центр МРТ діагностики", "cat": "med", "product": "booking_bot"}
 ]
 
 ALL_CITIES = [
     "Київ", "Львів", "Одеса", "Дніпро", "Харків",
     "Вінниця", "Івано-Франківськ", "Тернопіль", "Чернівці",
     "Запоріжжя", "Полтава", "Черкаси", "Житомир", "Хмельницький",
-    "Рівне", "Луцьк", "Ужгород", "Миколаїв"
+    "Рівне", "Луцьк", "Ужгород"
 ]
 
 control_keyboard = ReplyKeyboardMarkup(
