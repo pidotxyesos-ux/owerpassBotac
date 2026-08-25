@@ -16,9 +16,7 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMar
 # =====================================================================
 OPENAI_API_KEY = "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"
 TELEGRAM_BOT_TOKEN = "8628836250:AAFu3eHYTLa9hYtwBBiUemVkPmF_vEDrXos"
-ADMIN_CHAT_ID = 8984958620
-
- # Ваш особистий Telegram ID
+ADMIN_CHAT_ID = 8984958620  # Ваш особистий Telegram ID
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
