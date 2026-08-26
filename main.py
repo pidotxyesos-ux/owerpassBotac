@@ -17,7 +17,7 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMar
 # Секрети краще тримати в змінних оточення, а не в коді.
 # Якщо змінна оточення не задана — використовується значення нижче (як було раніше).
 # =====================================================================
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "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")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "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")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8628836250:AAFu3eHYTLa9hYtwBBiUemVkPmF_vEDrXos")
 ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "8984958620"))  # Ваш особистий Telegram ID
 
