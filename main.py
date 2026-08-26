@@ -279,17 +279,19 @@ class SmartLeadHunter:
         return None
 
     def extract_phones(self, text: str) -> List[str]:
+        """Номери в біо часто пишуть з пробілами/дужками/дефісами
+        (напр. '+380 (63) 123-45-67' або '063 123 45 67') — стара версія
+        ловила лише злиті цифри й пропускала майже все з соцмереж."""
         if not text:
             return []
-        patterns = [r'\+?380\d{9}', r'0\d{9}']
+        pattern = r'(?:\+?38)?[\s\-]?\(?0\d{2}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}\b'
         phones = []
-        for pattern in patterns:
-            for match in re.findall(pattern, text):
-                clean_num = re.sub(r'\D', '', match)
-                if len(clean_num) == 12 and clean_num.startswith('380'):
-                    phones.append(f"+{clean_num}")
-                elif len(clean_num) == 10 and clean_num.startswith('0'):
-                    phones.append(f"+38{clean_num}")
+        for match in re.findall(pattern, text):
+            clean_num = re.sub(r'\D', '', match)
+            if len(clean_num) == 12 and clean_num.startswith('380'):
+                phones.append(f"+{clean_num}")
+            elif len(clean_num) == 10 and clean_num.startswith('0'):
+                phones.append(f"+38{clean_num}")
         return list(dict.fromkeys(phones))[:3]
 
     def extract_emails(self, text: str) -> List[str]:
@@ -310,6 +312,24 @@ class SmartLeadHunter:
                 continue
             return m
         return None
+
+    def extract_meta_description(self, html: str) -> str:
+        """Instagram/TikTok часто віддають біо саме в og:description /
+        twitter:description мета-тегах, навіть коли сама сторінка вимагає
+        логін для перегляду постів. Це найнадійніше джерело телефону/сайту."""
+        if not html:
+            return ""
+        chunks = []
+        for prop in ("og:description", "twitter:description", "description"):
+            m = re.search(
+                rf'<meta[^>]+(?:property|name)=["\']{re.escape(prop)}["\'][^>]+content=["\']([^"\']+)["\']',
+                html, flags=re.IGNORECASE)
+            if m:
+                chunks.append(m.group(1))
+        title_m = re.search(r'<title[^>]*>([^<]+)</title>', html, flags=re.IGNORECASE)
+        if title_m:
+            chunks.append(title_m.group(1))
+        return " ".join(chunks)
 
     def classify_url(self, url: str, contacts: Dict):
         url_lower = url.lower()
@@ -354,12 +374,24 @@ class SmartLeadHunter:
         self.classify_url(candidate["url"], contacts)
 
         bio_chunks = [f"{candidate.get('title', '')} {candidate.get('snippet', '')}"]
+        profile_meta_text = ""
 
-        # Для соцмереж — окремий пошук саме профілю, щоб дістати біо (там і телефон, і сайт)
         if candidate["source"] in ("instagram", "tiktok"):
-            profile_results = await self.raw_search(candidate["url"], max_results=2)
-            for r in profile_results:
-                bio_chunks.append(f"{r.get('title', '')} {r.get('body', '')}")
+            # 1) Пряме звернення до сторінки профілю — головне джерело біо/телефону.
+            #    (Раніше тут помилково передавали URL як пошуковий запит у DDGS,
+            #    що майже завжди повертало порожнечу.)
+            profile_html = await self.fetch_page_content(candidate["url"])
+            profile_meta_text = self.extract_meta_description(profile_html)
+            if profile_meta_text:
+                bio_chunks.append(profile_meta_text)
+
+            # 2) Додатково — пошук за іменем профілю, як резерв, якщо прямий фетч не вдався
+            #    (Instagram інколи віддає сторінку логіну без мета-тегів).
+            username = candidate["url"].rstrip('/').split('/')[-1].lstrip('@')
+            if not profile_meta_text and username:
+                backup_results = await self.raw_search(f'"{username}" {candidate["source"]}', max_results=2)
+                for r in backup_results:
+                    bio_chunks.append(f"{r.get('title', '')} {r.get('body', '')}")
 
         full_bio_text = " ".join(bio_chunks)
         contacts["phone"].extend(self.extract_phones(full_bio_text))
@@ -403,6 +435,8 @@ class SmartLeadHunter:
             "Почни просто і по-дружньому, без пафосу."
         ])
 
+        raw_context = business_data.get("raw_context", "")[:600]
+
         prompt = f"""
         Ти - досвідчений менеджер з продажів IT-послуг (боти, сайти, автоматизація).
         Напиши УНІКАЛЬНЕ (не шаблонне) холодне повідомлення у месенджер для КОНКРЕТНОГО клієнта нижче.
@@ -412,22 +446,20 @@ class SmartLeadHunter:
         ніби його написала жива людина саме для цього бізнесу, з урахуванням стану його сайту.
 
         Клієнт:
-        - Назва/Ніша: {business_data['name']} ({business_data['category']})
+        - Пошукова ніша: {business_data['name']} ({business_data['category']})
         - Місто: {business_data['city']}
         - Стан сайту: {site_desc}
         - Соцмережі: {'Є' if has_socials else 'НЕМАЄ'}
         - Продукт для продажу: {business_data['product']}
-
-        Вимоги до офферу (pitch_message):
-        - Конкретна пропозиція (що ми пропонуємо розробити і яку проблему це вирішить), зважаючи на стан сайту.
-        - М'який заклик до дії.
-        - Без довгої "води", дружній та професійний тон, 3-5 речень.
+        - Сирі дані зі сторінки/сніпета (назва, біо, título тощо), використай щоб визначити
+          РЕАЛЬНУ назву компанії: {raw_context or "немає додаткових даних"}
 
         Поверни лише JSON, без пояснень:
         {{
+            "company_name": "нормальна людська назва компанії, визначена з сирих даних (якщо не вдається — залиши нішу як є)",
             "heat_score": 9,
             "pain_point": "коротко в чому біль клієнта",
-            "pitch_message": "готовий текст повідомлення",
+            "pitch_message": "готовий текст повідомлення, 3-5 речень, конкретна пропозиція + м'який заклик до дії",
             "recommended_price": 5000
         }}
         """
@@ -441,16 +473,32 @@ class SmartLeadHunter:
                     temperature=1.0,
                     response_format={"type": "json_object"}
                 )
-                return json.loads(response.choices[0].message.content)
+                raw_content = response.choices[0].message.content or ""
+                cleaned = re.sub(r'^```json|```$', '', raw_content.strip(), flags=re.MULTILINE).strip()
+                parsed = json.loads(cleaned)
+                if not parsed.get("pitch_message"):
+                    raise ValueError("GPT повернув порожній pitch_message")
+                return parsed
             except Exception as e:
                 last_error = e
                 logging.error(f"GPT Error (attempt {attempt + 1}): {e}")
                 await asyncio.sleep(1)
 
-        # Якщо GPT недоступний — краще позначити лід як "потребує ручної обробки",
-        # ніж видати клієнту статичний шаблонний текст.
-        logging.error(f"GPT остаточно недоступний, лід буде без готового офферу: {last_error}")
+        # Якщо GPT недоступний — позначаємо лід як "потребує ручної обробки" і
+        # шлемо адміну ТОЧНУ причину, щоб не гадати наосліп (найчастіше це
+        # невалідний/вичерпаний OPENAI_API_KEY або немає доступу до моделі).
+        logging.error(f"GPT остаточно недоступний: {last_error}")
+        try:
+            await bot.send_message(
+                ADMIN_CHAT_ID,
+                f"⚠️ <b>GPT не відповів 3 рази поспіль.</b>\nПричина: <code>{str(last_error)[:500]}</code>\n\n"
+                f"Найчастіші причини: невірний/прострочений OPENAI_API_KEY, вичерпана квота, немає доступу до моделі gpt-4o-mini.",
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass
         return {
+            "company_name": business_data['name'],
             "heat_score": 5,
             "pain_point": "не вдалось згенерувати автоматично — потрібен ручний аналіз",
             "pitch_message": "⚠️ ШІ тимчасово недоступний — напишіть повідомлення для цього ліда вручну.",
@@ -564,7 +612,10 @@ async def process_lead_candidate(candidate: Dict, niche: Dict, city: str, user_i
         "name": business_name,
         "category": niche['name'],
         "city": city,
-        "product": niche['product']
+        "product": niche['product'],
+        # сирий текст (заголовок сторінки, сніпет пошуку, og:description профілю) —
+        # саме з нього GPT дістає реальну назву компанії замість шматка URL
+        "raw_context": f"{candidate.get('title', '')} | {candidate.get('snippet', '')}"
     }
 
     contacts = await hunter.find_contacts_for_candidate(business_name, city, candidate)
@@ -577,6 +628,8 @@ async def process_lead_candidate(candidate: Dict, niche: Dict, city: str, user_i
     session["seen_leads"].add(dedupe_key)
 
     analysis = await hunter.analyze_with_gpt(business_data, contacts)
+    if analysis.get("company_name") and not analysis.get("gpt_failed"):
+        business_data["name"] = analysis["company_name"]
 
     if not analysis.get("gpt_failed"):
         if analysis['heat_score'] < 5:
