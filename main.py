@@ -1,10 +1,11 @@
 import asyncio
 import json
 import logging
+import os
 import re
 import random
 import aiohttp
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional
 from ddgs import DDGS
 from openai import AsyncOpenAI
 from aiogram import Bot, Dispatcher, types, F
@@ -13,10 +14,12 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMar
 
 # =====================================================================
 # CONFIGURATION
+# Секрети краще тримати в змінних оточення, а не в коді.
+# Якщо змінна оточення не задана — використовується значення нижче (як було раніше).
 # =====================================================================
-OPENAI_API_KEY = "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"
-TELEGRAM_BOT_TOKEN = "8628836250:AAFu3eHYTLa9hYtwBBiUemVkPmF_vEDrXos"
-ADMIN_CHAT_ID = 8984958620  # Ваш особистий Telegram ID
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "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")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8628836250:AAFu3eHYTLa9hYtwBBiUemVkPmF_vEDrXos")
+ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "8984958620"))  # Ваш особистий Telegram ID
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -24,13 +27,11 @@ client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
 
-# Список дозволених ID та Username користувачів (Адмін за замовчуванням)
 ALLOWED_USERS = set([ADMIN_CHAT_ID])
-USERNAMES_MAP = {}  # Зберігає мапінг @username -> user_id
+USERNAMES_MAP = {}
 
 # =====================================================================
 # PER-USER SESSIONS
-# Кожен користувач тепер має власний скан, власні фільтри і власні ліди.
 # =====================================================================
 user_sessions: Dict[int, dict] = {}
 
@@ -45,14 +46,16 @@ def get_session(user_id: int) -> dict:
                 "cities": [],
                 "min_price": 0
             },
-            "seen_leads": set(),   # dedupe: phone/email/name+city already sent to this user
-            "seen_urls": set(),    # dedupe: urls already processed this session
+            "seen_leads": set(),
+            "seen_urls": set(),
         }
     return user_sessions[user_id]
 
 
 # =====================================================================
 # НІШІ ТА КАТЕГОРІЇ
+# Прибрано ніші, власники яких зазвичай самі здатні зробити собі сайт/бота
+# (айтішники, розробники автоматизацій) — їм наш оффер нецікавий.
 # =====================================================================
 CATEGORIES = {
     "construction": "🏗 Будівництво та ремонт",
@@ -63,7 +66,6 @@ CATEGORIES = {
 }
 
 ALL_NICHES = [
-    # --- СТРОИТЕЛЬСТВО И РЕМОНТ (Качественный сегмент) ---
     {"name": "ремонт квартир під ключ", "cat": "construction", "product": "site_calc"},
     {"name": "монтаж та продаж сонячних станцій", "cat": "construction", "product": "site_calc"},
     {"name": "будівництво каркасних будинків", "cat": "construction", "product": "portfolio_site"},
@@ -73,14 +75,12 @@ ALL_NICHES = [
     {"name": "буріння свердловин на воду", "cat": "construction", "product": "landing_page"},
     {"name": "виготовлення та монтаж алюмінієвих вікон і дверей", "cat": "construction", "product": "site_calc"},
 
-    # --- АВТО И СПЕЦТЕХНИКА (Нормальный бизнес) ---
     {"name": "детейлінг та захисні плівки", "cat": "auto", "product": "site_calc"},
     {"name": "автопідбір під ключ з Європи та США", "cat": "auto", "product": "bot_quiz"},
     {"name": "оренда комерційної спецтехніки", "cat": "auto", "product": "bot_catalog"},
     {"name": "чип-тюнінг та ретрофіт фар", "cat": "auto", "product": "landing_page"},
     {"name": "реставрація та перетяжка салону авто", "cat": "auto", "product": "photo_estimate_bot"},
 
-    # --- ПРОДАЖУ: ТОВАРКА, МОТО, АВТО, ДРОПШИППІНГ (E-commerce) ---
     {"name": "продаж мотоциклів та скутерів", "cat": "ecommerce", "product": "bot_catalog"},
     {"name": "продаж квадроциклів та електротранспорту", "cat": "ecommerce", "product": "site_calc"},
     {"name": "магазин запчастин та аксесуарів для авто", "cat": "ecommerce", "product": "site_calc"},
@@ -89,21 +89,19 @@ ALL_NICHES = [
     {"name": "магазин брендового одягу та взуття дроп", "cat": "ecommerce", "product": "site_calc"},
     {"name": "продаж таунхаусів від забудовника", "cat": "ecommerce", "product": "portfolio_site"},
 
-    # --- B2B И УСЛУГИ ДЛЯ БИЗНЕСА ---
+    # Прибрано "впровадження CRM та автоматизація бізнесу" — це вже IT-люди,
+    # які або самі зроблять сайт/бота, або мають штат розробників.
     {"name": "бухгалтерський аутсорсинг для ФОП і ТОВ", "cat": "b2b", "product": "site_calc"},
-    {"name": "впровадження CRM та автоматизація бізнесу", "cat": "b2b", "product": "b2b_landing"},
     {"name": "рекрутингове агентство та підбір персоналу", "cat": "b2b", "product": "b2b_landing"},
     {"name": "оренда рекламних білбордів тасілайтів", "cat": "b2b", "product": "bot_catalog"},
     {"name": "складський аутсорсинг та фулфілмент", "cat": "b2b", "product": "b2b_landing"},
 
-    # --- БЫТОВЫЕ И DIGITAL УСЛУГИ ---
     {"name": "меблі на замовлення кухні шафи", "cat": "services", "product": "site_calc"},
     {"name": "професійна хімчистка меблів вдома", "cat": "services", "product": "photo_estimate_bot"},
     {"name": "генеральний клінінг квартир і офісів", "cat": "services", "product": "bot_calc"},
     {"name": "монтаж систем відеонагляду та безпеки", "cat": "services", "product": "site_calc"},
     {"name": "виготовлення корпусних меблів", "cat": "services", "product": "portfolio_site"},
 
-    # --- МЕДИЦИНА И КРАСОТА (Премиум сегмент) ---
     {"name": "стоматологія імплантація та брекети", "cat": "med", "product": "booking_bot"},
     {"name": "офтальмологічна клініка лазерна корекція", "cat": "med", "product": "booking_bot"},
     {"name": "косметологія та апаратна епіляція", "cat": "med", "product": "booking_bot"},
@@ -119,11 +117,63 @@ ALL_CITIES = [
 
 control_keyboard = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="🚀 Запустити Mass Scan"), KeyboardButton(text="⏹ Зупинити")],
-        [KeyboardButton(text="⚙️ Налаштувати фільтри"), KeyboardButton(text="👥 Менеджери")]
+        [KeyboardButton(text="🚀 Запустити пошук"), KeyboardButton(text="⏹ Зупинити")],
+        [KeyboardButton(text="⚙️ Фільтри"), KeyboardButton(text="👥 Менеджери")]
     ],
     resize_keyboard=True
 )
+
+# =====================================================================
+# ФІЛЬТРАЦІЯ СМІТТЯ: вакансії, reels/tiktok-відео без прив'язки до бізнесу
+# =====================================================================
+VACANCY_KEYWORDS = [
+    "вакансі", "вакансия", "шукаємо співробітника", "шукаємо менеджера",
+    "потрібен продавец", "потрібна людина в команду", "запрошуємо в команду",
+    "резюме на пошту", "офіційне працевлаштування", "графік роботи",
+    "з/п від", "заробітна плата від", "hh.ua", "rabota.ua",
+    "vacancy", "hiring", "we are hiring", "send your cv"
+]
+
+SOCIAL_PROFILE_JUNK = {"reel", "reels", "p", "tv", "explore", "stories", "accounts", "video", "tag", "hashtag"}
+
+
+def looks_like_vacancy(title: str, snippet: str) -> bool:
+    text = f"{title} {snippet}".lower()
+    return any(kw in text for kw in VACANCY_KEYWORDS)
+
+
+def normalize_social_or_skip(url: str, source: str) -> Optional[str]:
+    """Пошук по Instagram/TikTok часто повертає окремі reels/відео, а не сторінку
+    бізнесу. Ми зводимо такі посилання до профілю (щоб проаналізувати саме
+    сторінку бізнесу, а не одне відео), або відкидаємо кандидата, якщо
+    прив'язати відео до конкретного профілю неможливо."""
+    if source == "instagram":
+        m = re.search(r'instagram\.com/([A-Za-z0-9_.]+)/(reel|reels|p|tv)/', url)
+        if m:
+            username = m.group(1)
+            if username.lower() in SOCIAL_PROFILE_JUNK:
+                return None
+            return f"https://www.instagram.com/{username}/"
+        if re.search(r'instagram\.com/(reel|reels|p|tv|stories|explore)/', url):
+            return None  # відео/пост без імені користувача в URL — не бізнес-профіль
+        m2 = re.search(r'instagram\.com/([A-Za-z0-9_.]+)/?(?:\?.*)?$', url)
+        if m2:
+            username = m2.group(1)
+            if username.lower() in SOCIAL_PROFILE_JUNK:
+                return None
+            return f"https://www.instagram.com/{username}/"
+        return None
+
+    if source == "tiktok":
+        m = re.search(r'tiktok\.com/(@[A-Za-z0-9_.]+)/video/', url)
+        if m:
+            return f"https://www.tiktok.com/{m.group(1)}"
+        m2 = re.search(r'tiktok\.com/(@[A-Za-z0-9_.]+)/?(?:\?.*)?$', url)
+        if m2:
+            return f"https://www.tiktok.com/{m2.group(1)}"
+        return None
+
+    return url
 
 
 # =====================================================================
@@ -146,9 +196,6 @@ class SmartLeadHunter:
             await self.session.close()
 
     async def raw_search(self, query: str, max_results: int = 5) -> List[Dict]:
-        """Повертає [{href, body, title}] замість самих лише посилань,
-        бо body (сніпет) часто вже містить телефон/пошту без потреби фетчити сторінку."""
-
         def _search():
             logging.getLogger("ddgs").setLevel(logging.ERROR)
             logging.getLogger("duckduckgo_search").setLevel(logging.ERROR)
@@ -169,9 +216,9 @@ class SmartLeadHunter:
         return await asyncio.to_thread(_search)
 
     async def multi_source_search(self, niche_name: str, city: str) -> List[Dict]:
-        """Шукає в кількох джерелах одразу: звичайна видача, Instagram, TikTok,
-        Google Maps, фриланс/бізнес-майданчики. Повертає деduped список результатів
-        з позначкою джерела."""
+        """Шукає в кількох джерелах: веб, Instagram, TikTok, Google Maps,
+        фриланс/бізнес-майданчики. Reels/TikTok-відео зводяться до профілю
+        бізнесу (або відкидаються, якщо профіль встановити неможливо)."""
         base_query = f"{niche_name} {city}"
         query_plan = [
             (base_query, "web"),
@@ -188,25 +235,43 @@ class SmartLeadHunter:
         seen_urls_local = set()
 
         for query, source in query_plan:
-            results = await self.raw_search(query, max_results=3)
+            results = await self.raw_search(query, max_results=4)
             for r in results:
-                url = r.get("href")
-                if not url or url in seen_urls_local:
+                raw_url = r.get("href")
+                if not raw_url:
+                    continue
+
+                title = r.get("title", "") or ""
+                snippet = r.get("body", "") or ""
+
+                # відкидаємо вакансії одразу, ще на етапі видачі
+                if looks_like_vacancy(title, snippet):
+                    continue
+
+                if source in ("instagram", "tiktok"):
+                    normalized = normalize_social_or_skip(raw_url, source)
+                    if not normalized:
+                        continue  # reel/відео без прив'язки до профілю — скіп
+                    url = normalized
+                else:
+                    url = raw_url
+
+                if url in seen_urls_local:
                     continue
                 seen_urls_local.add(url)
                 all_results.append({
                     "url": url,
-                    "snippet": r.get("body", "") or "",
-                    "title": r.get("title", "") or "",
+                    "snippet": snippet,
+                    "title": title,
                     "source": source
                 })
-            await asyncio.sleep(0.2)  # трохи розтягуємо запити, щоб не банили
+            await asyncio.sleep(0.2)
 
         return all_results
 
     async def fetch_page_content(self, url: str) -> Optional[str]:
         try:
-            async with self.session.get(url, timeout=6) as resp:
+            async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=6)) as resp:
                 if resp.status == 200:
                     return await resp.text()
         except Exception:
@@ -219,8 +284,7 @@ class SmartLeadHunter:
         patterns = [r'\+?380\d{9}', r'0\d{9}']
         phones = []
         for pattern in patterns:
-            matches = re.findall(pattern, text)
-            for match in matches:
+            for match in re.findall(pattern, text):
                 clean_num = re.sub(r'\D', '', match)
                 if len(clean_num) == 12 and clean_num.startswith('380'):
                     phones.append(f"+{clean_num}")
@@ -234,6 +298,19 @@ class SmartLeadHunter:
         pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
         return list(dict.fromkeys(re.findall(pattern, text)))[:3]
 
+    def extract_bare_domain(self, text: str) -> Optional[str]:
+        """Ловить домен, написаний просто текстом у біо (без http), напр.
+        'сайт: mysite.com.ua' — часто єдиний спосіб дізнатись про сайт із соцмереж."""
+        if not text:
+            return None
+        pattern = r'\b((?:[a-zA-Z0-9-]+\.)+(?:com|net|org|ua|store|shop|site|info|pl|de)(?:\.[a-z]{2})?)\b'
+        for m in re.findall(pattern, text, flags=re.IGNORECASE):
+            low = m.lower()
+            if any(low.endswith(d) for d in ("instagram.com", "tiktok.com", "facebook.com", "t.me", "telegram.me")):
+                continue
+            return m
+        return None
+
     def classify_url(self, url: str, contacts: Dict):
         url_lower = url.lower()
         if "instagram.com" in url_lower:
@@ -246,35 +323,58 @@ class SmartLeadHunter:
             contacts["socials"]["telegram"] = url
         elif "google.com/maps" in url_lower or "maps.app.goo.gl" in url_lower:
             contacts["socials"]["maps"] = url
+        elif any(x in url_lower for x in ["linktr.ee", "taplink", "hi.link", "mssg.me", "bio.link"]):
+            contacts["socials"]["linkinbio"] = url
         elif any(x in url_lower for x in ["freelancehunt.com", "work.ua", "kabanchik.ua", "prom.ua"]):
             contacts["socials"]["listing"] = url
         elif not contacts.get("website"):
             contacts["website"] = url
 
-    async def find_contacts_for_candidate(self, business_name: str, city: str, candidate: Dict) -> Dict:
-        """Збирає контакти для однієі знайденої картки: спочатку зі сніпета пошуку
-        (працює навіть для Instagram/TikTok, які неможливо нормально зафетчити),
-        потім, якщо це звичайний сайт — фетчить сторінку і парсить її теж."""
-        contacts = {"phone": [], "email": [], "socials": {}, "website": None}
+    async def analyze_website_presence(self, contacts: Dict, bio_text: str) -> str:
+        """Визначає статус сайту: 'yes' (є робочий сайт), 'no' (немає взагалі),
+        'broken' (домен вказаний, але не відкривається/порожній — теж хороша
+        зачіпка для офферу)."""
+        if not contacts.get("website"):
+            bare_domain = self.extract_bare_domain(bio_text)
+            if bare_domain:
+                contacts["website"] = f"https://{bare_domain}"
+            else:
+                return "no"
 
+        page_content = await self.fetch_page_content(contacts["website"])
+        if page_content and len(page_content) > 300:
+            return "yes"
+        return "broken"
+
+    async def find_contacts_for_candidate(self, business_name: str, city: str, candidate: Dict) -> Dict:
+        """Збирає контакти для кандидата. Для Instagram/TikTok профілів робить
+        додатковий пошук саме по сторінці профілю, бо там найчастіше і вказаний
+        телефон/сайт у біо."""
+        contacts = {"phone": [], "email": [], "socials": {}, "website": None}
         self.classify_url(candidate["url"], contacts)
 
-        # 1. Контакти прямо зі сніпета видачі
-        snippet_text = f"{candidate.get('title', '')} {candidate.get('snippet', '')}"
-        contacts["phone"].extend(self.extract_phones(snippet_text))
-        contacts["email"].extend(self.extract_emails(snippet_text))
+        bio_chunks = [f"{candidate.get('title', '')} {candidate.get('snippet', '')}"]
 
-        # 2. Якщо це звичайний сайт (не соцмережа/агрегатор) — фетчимо і парсимо HTML
+        # Для соцмереж — окремий пошук саме профілю, щоб дістати біо (там і телефон, і сайт)
+        if candidate["source"] in ("instagram", "tiktok"):
+            profile_results = await self.raw_search(candidate["url"], max_results=2)
+            for r in profile_results:
+                bio_chunks.append(f"{r.get('title', '')} {r.get('body', '')}")
+
+        full_bio_text = " ".join(bio_chunks)
+        contacts["phone"].extend(self.extract_phones(full_bio_text))
+        contacts["email"].extend(self.extract_emails(full_bio_text))
+
+        # Якщо це звичайний сайт — фетчимо і парсимо HTML
         if contacts["website"]:
             page_content = await self.fetch_page_content(contacts["website"])
             if page_content:
                 contacts["phone"].extend(self.extract_phones(page_content))
                 contacts["email"].extend(self.extract_emails(page_content))
 
-        # 3. Для соцмереж без контактів у сніпеті — додатковий пошук
-        #    (профілі часто дублюють номер/пошту на лендінгу чи в лінктрі)
+        # Якщо досі нічого — фінальна спроба прицільним запитом
         if not contacts["phone"] and not contacts["email"]:
-            follow_up = await self.raw_search(f"{business_name} {city} телефон пошта", max_results=2)
+            follow_up = await self.raw_search(f"{business_name} {city} телефон номер", max_results=2)
             for r in follow_up:
                 text = f"{r.get('title', '')} {r.get('body', '')}"
                 contacts["phone"].extend(self.extract_phones(text))
@@ -284,13 +384,18 @@ class SmartLeadHunter:
 
         contacts["phone"] = list(dict.fromkeys(contacts["phone"]))[:3]
         contacts["email"] = list(dict.fromkeys(contacts["email"]))[:3]
+        contacts["site_status"] = await self.analyze_website_presence(contacts, full_bio_text)
         return contacts
 
     async def analyze_with_gpt(self, business_data: Dict, contacts: Dict) -> Dict:
-        has_website = bool(contacts.get("website"))
+        site_status = contacts.get("site_status", "no")
+        site_desc = {
+            "yes": "Є робочий сайт",
+            "broken": "Домен десь вказаний, але сайт не працює/порожній",
+            "no": "Сайту немає взагалі"
+        }[site_status]
         has_socials = bool(contacts.get("socials"))
 
-        # невеликий рандом-затравок, щоб GPT не скочувався в одну й ту саму структуру фрази
         opener_hint = random.choice([
             "Почни з короткого щирого коментаря про їхній бізнес.",
             "Почни одразу з болю клієнта, без довгого привітання.",
@@ -301,18 +406,20 @@ class SmartLeadHunter:
         prompt = f"""
         Ти - досвідчений менеджер з продажів IT-послуг (боти, сайти, автоматизація).
         Напиши УНІКАЛЬНЕ (не шаблонне) холодне повідомлення у месенджер для КОНКРЕТНОГО клієнта нижче.
-        Кожного разу формулюй по-новому: не копіюй структуру речень з попередніх повідомлень,
+        Формулюй щоразу по-новому: не повторюй структуру речень з попередніх повідомлень,
         варіюй довжину, порядок думок і слова. {opener_hint}
+        НЕ використовуй жодних заготовлених фраз-шаблонів — повідомлення повинно звучати так,
+        ніби його написала жива людина саме для цього бізнесу, з урахуванням стану його сайту.
 
         Клієнт:
         - Назва/Ніша: {business_data['name']} ({business_data['category']})
         - Місто: {business_data['city']}
-        - Сайт: {'Є' if has_website else 'НЕМАЄ'}
+        - Стан сайту: {site_desc}
         - Соцмережі: {'Є' if has_socials else 'НЕМАЄ'}
         - Продукт для продажу: {business_data['product']}
 
         Вимоги до офферу (pitch_message):
-        - Конкретна пропозиція (що ми пропонуємо розробити і яку проблему це вирішить).
+        - Конкретна пропозиція (що ми пропонуємо розробити і яку проблему це вирішить), зважаючи на стан сайту.
         - М'який заклик до дії.
         - Без довгої "води", дружній та професійний тон, 3-5 речень.
 
@@ -325,7 +432,8 @@ class SmartLeadHunter:
         }}
         """
 
-        for attempt in range(2):
+        last_error = None
+        for attempt in range(3):
             try:
                 response = await client.chat.completions.create(
                     model="gpt-4o-mini",
@@ -335,16 +443,19 @@ class SmartLeadHunter:
                 )
                 return json.loads(response.choices[0].message.content)
             except Exception as e:
+                last_error = e
                 logging.error(f"GPT Error (attempt {attempt + 1}): {e}")
                 await asyncio.sleep(1)
 
-        # фолбек лишається, але тепер він реально рідкісний, а не типовий випадок
-        logging.error("GPT fallback used — check API key / quota / model access.")
+        # Якщо GPT недоступний — краще позначити лід як "потребує ручної обробки",
+        # ніж видати клієнту статичний шаблонний текст.
+        logging.error(f"GPT остаточно недоступний, лід буде без готового офферу: {last_error}")
         return {
-            "heat_score": 6,
-            "pain_point": "Потребує автоматизації заяв та нових клієнтів",
-            "pitch_message": f"Доброго дня! Помітив вашу компанію {business_data['name']}. Ми розробляємо рішення для автоматизації продажів у ніші {business_data['category']}. Підкажіть, чи актуально зараз збільшити потік заявок?",
-            "recommended_price": 4000
+            "heat_score": 5,
+            "pain_point": "не вдалось згенерувати автоматично — потрібен ручний аналіз",
+            "pitch_message": "⚠️ ШІ тимчасово недоступний — напишіть повідомлення для цього ліда вручну.",
+            "recommended_price": 0,
+            "gpt_failed": True
         }
 
 
@@ -354,47 +465,70 @@ hunter = SmartLeadHunter()
 # =====================================================================
 # LOGIC & SCANNER
 # =====================================================================
+def _viber_link(phone: str) -> str:
+    return f"viber://chat?number={phone.replace('+', '%2B')}"
+
+
+def _telegram_guess_link(phone: str) -> str:
+    # t.me/+<номер> відкриє чат, якщо у власника дозволено знаходження за номером
+    return f"https://t.me/{phone}"
+
+
 async def send_lead_to_user(user_id: int, business: Dict, contacts: Dict, analysis: Dict):
-    has_website = "✅ Так" if contacts.get('website') else "❌ Ні (Чудова нагода!)"
+    site_labels = {"yes": "✅ Є", "broken": "⚠️ Не працює", "no": "❌ Немає (гарна нагода!)"}
+    site_status_label = site_labels.get(contacts.get("site_status", "no"), "❌ Немає")
 
     buttons = []
+    row = []
     if contacts['phone']:
-        buttons.append([InlineKeyboardButton(text=f"📞 {contacts['phone'][0]}", url=f"tel:{contacts['phone'][0]}")])
+        phone = contacts['phone'][0]
+        row.append(InlineKeyboardButton(text="📞 Дзвінок", url=f"tel:{phone}"))
+        row.append(InlineKeyboardButton(text="💜 Viber", url=_viber_link(phone)))
+    if row:
+        buttons.append(row)
+        row = []
+
     if contacts['socials'].get('telegram'):
-        buttons.append([InlineKeyboardButton(text="✈️ Telegram", url=contacts['socials']['telegram'])])
+        row.append(InlineKeyboardButton(text="✈️ Telegram", url=contacts['socials']['telegram']))
+    elif contacts['phone']:
+        row.append(InlineKeyboardButton(text="✈️ Telegram (спроба)", url=_telegram_guess_link(contacts['phone'][0])))
     if contacts['socials'].get('instagram'):
-        buttons.append([InlineKeyboardButton(text="📸 Instagram", url=contacts['socials']['instagram'])])
+        row.append(InlineKeyboardButton(text="📸 Instagram", url=contacts['socials']['instagram']))
+    if row:
+        buttons.append(row)
+        row = []
+
     if contacts['socials'].get('tiktok'):
-        buttons.append([InlineKeyboardButton(text="🎵 TikTok", url=contacts['socials']['tiktok'])])
+        row.append(InlineKeyboardButton(text="🎵 TikTok", url=contacts['socials']['tiktok']))
     if contacts['socials'].get('maps'):
-        buttons.append([InlineKeyboardButton(text="🗺 Google Maps", url=contacts['socials']['maps'])])
+        row.append(InlineKeyboardButton(text="🗺 Maps", url=contacts['socials']['maps']))
+    if row:
+        buttons.append(row)
+        row = []
+
+    if contacts.get('website'):
+        row.append(InlineKeyboardButton(text="🌐 Сайт", url=contacts['website']))
     if contacts['socials'].get('listing'):
-        buttons.append([InlineKeyboardButton(text="📋 Оголошення", url=contacts['socials']['listing'])])
-    if contacts['website']:
-        buttons.append([InlineKeyboardButton(text="🌐 Сайт", url=contacts['website'])])
+        row.append(InlineKeyboardButton(text="📋 Оголошення", url=contacts['socials']['listing']))
+    if row:
+        buttons.append(row)
 
     markup = InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None
-    pitch_text = analysis.get('pitch_message', 'Доброго дня!')
+    pitch_text = analysis.get('pitch_message', '')
+    warn = "\n⚠️ <i>Потребує ручної перевірки — ШІ не згенерував оффер</i>" if analysis.get("gpt_failed") else ""
 
-    msg = f"""🔥 <b>NEW LEAD FOUND</b> 🔥
-Score: <b>{analysis['heat_score']}/10</b>
+    phones_str = ", ".join(contacts['phone']) if contacts['phone'] else "—"
+    emails_str = ", ".join(contacts['email']) if contacts['email'] else "—"
 
-🏢 <b>{business['name']}</b>
-📍 {business['city']} | {business['category']}
-
-💰 <b>Потенціал:</b> ~{analysis['recommended_price']} грн
-🎯 <b>Що продаємо:</b> {business['product']}
-
-⚠️ <b>Біль:</b> {analysis['pain_point']}
-
-💬 <b>Готове повідомлення (натисни щоб скопіювати):</b>
-<code>{pitch_text}</code>
-
-📇 <b>Контакти:</b>
-📱 Тел: <code>{', '.join(contacts['phone']) if contacts['phone'] else '-'}</code>
-📧 Email: <code>{', '.join(contacts['email']) if contacts['email'] else '-'}</code>
-🌐 Сайт: {has_website}
-"""
+    msg = (
+        f"🔥 <b>{business['name']}</b>\n"
+        f"📍 {business['city']} · {business['category']}\n"
+        f"⭐ {analysis['heat_score']}/10   💰 ~{analysis['recommended_price']} грн   🌐 Сайт: {site_status_label}\n\n"
+        f"<b>Біль:</b> {analysis['pain_point']}{warn}\n\n"
+        f"<b>Повідомлення (тап — скопіювати):</b>\n<code>{pitch_text}</code>\n\n"
+        f"📱 {phones_str}\n"
+        f"📧 {emails_str}"
+    )
 
     try:
         await bot.send_message(user_id, msg, parse_mode="HTML", reply_markup=markup)
@@ -420,7 +554,7 @@ async def process_lead_candidate(candidate: Dict, niche: Dict, city: str, user_i
         return
 
     if candidate["source"] in ("instagram", "tiktok"):
-        business_name = url.rstrip('/').split('/')[-1].replace('@', '')
+        business_name = url.rstrip('/').split('/')[-1].lstrip('@').replace('@', '')
         if not business_name or len(business_name) < 3:
             business_name = niche['name'].title()
     else:
@@ -444,10 +578,11 @@ async def process_lead_candidate(candidate: Dict, niche: Dict, city: str, user_i
 
     analysis = await hunter.analyze_with_gpt(business_data, contacts)
 
-    if analysis['heat_score'] < 5:
-        return
-    if analysis.get('recommended_price', 0) < session["filters"]['min_price']:
-        return
+    if not analysis.get("gpt_failed"):
+        if analysis['heat_score'] < 5:
+            return
+        if analysis.get('recommended_price', 0) < session["filters"]['min_price']:
+            return
 
     await send_lead_to_user(user_id, business_data, contacts, analysis)
     await asyncio.sleep(0.5)
@@ -502,12 +637,14 @@ async def cmd_start(message: types.Message):
         USERNAMES_MAP[f"@{message.from_user.username.lower()}"] = message.from_user.id
 
     if not is_authorized(message.from_user.id):
-        await message.answer("❌ У вас немає доступу до цього бота. Зверніться до адміністратора.")
+        await message.answer("❌ У вас немає доступу до цього бота.")
         return
 
-    get_session(message.from_user.id)  # ініціалізує особисту сесію
-    await message.answer("🚀 <b>Smart Lead Hunter Bot</b> готовий до роботи.\n\nКожен користувач бачить лише власні знайдені ліди.",
-                         reply_markup=control_keyboard, parse_mode="HTML")
+    get_session(message.from_user.id)
+    await message.answer(
+        "👋 <b>Lead Hunter</b>\n\nЗнаходжу бізнеси без сайту (або з нежиттєздатним сайтом) в Instagram, "
+        "TikTok, Google Maps та вебі, і готую персональний оффер.\n\nКожен користувач бачить лише власні ліди.",
+        reply_markup=control_keyboard, parse_mode="HTML")
 
 
 @dp.message(Command("add_manager"))
@@ -580,22 +717,22 @@ async def list_managers(message: types.Message):
 
     users_str = "\n".join(
         [f"• <code>{uid}</code> {'(Адмін)' if uid == ADMIN_CHAT_ID else ''}" for uid in ALLOWED_USERS])
-    text = f"👥 <b>Авторизовані користувачі ({len(ALLOWED_USERS)}):</b>\n\n{users_str}\n\n<b>Команди для Адміна:</b>\n• <code>/add_manager @username</code>\n• <code>/del_manager @username</code>\n\nℹ️ Кожен користувач тепер шукає і отримує ліди окремо, зі своїми фільтрами."
+    text = f"👥 <b>Авторизовані ({len(ALLOWED_USERS)}):</b>\n\n{users_str}\n\n<code>/add_manager @username</code>\n<code>/del_manager @username</code>"
     await message.answer(text, parse_mode="HTML")
 
 
 # =====================================================================
-# FILTERS UI & TELEGRAM HANDLERS (тепер per-user)
+# FILTERS UI (per-user)
 # =====================================================================
 def get_filters_inline_keyboard(session: dict):
     filters = session["filters"]
     keyboard = []
     for cat_key, cat_name in CATEGORIES.items():
-        status = "✅" if cat_key in filters['categories'] else "❌"
+        status = "✅" if cat_key in filters['categories'] else "▫️"
         keyboard.append([InlineKeyboardButton(text=f"{status} {cat_name}", callback_data=f"toggle_cat:{cat_key}")])
 
-    city_status = "Всі міста" if not filters['cities'] else f"Обрано: {len(filters['cities'])}"
-    keyboard.append([InlineKeyboardButton(text=f"🏙 Міста: ({city_status})", callback_data="open_cities_menu")])
+    city_status = "всі" if not filters['cities'] else f"{len(filters['cities'])} обрано"
+    keyboard.append([InlineKeyboardButton(text=f"🏙 Міста: {city_status}", callback_data="open_cities_menu")])
 
     price_label = f"💰 Мін. чек: {filters['min_price']} грн"
     keyboard.append([InlineKeyboardButton(text=price_label, callback_data="change_price")])
@@ -603,13 +740,12 @@ def get_filters_inline_keyboard(session: dict):
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-@dp.message(F.text == "⚙️ Налаштувати фільтри")
+@dp.message(F.text == "⚙️ Фільтри")
 async def show_filters(message: types.Message):
     if not is_authorized(message.from_user.id):
         return
     session = get_session(message.from_user.id)
-    await message.answer("⚙️ <b>Налаштування фільтрів пошуку (особисті):</b>\n\nОберіть напрямки, міста та мінімальний чек:",
-                         reply_markup=get_filters_inline_keyboard(session), parse_mode="HTML")
+    await message.answer("⚙️ <b>Фільтри пошуку</b>", reply_markup=get_filters_inline_keyboard(session), parse_mode="HTML")
 
 
 @dp.callback_query(F.data.startswith("toggle_cat:"))
@@ -655,10 +791,10 @@ async def open_cities_menu(callback: types.CallbackQuery):
     if row:
         keyboard.append(row)
 
-    keyboard.append([InlineKeyboardButton(text="🔄 Скинути міста (Шукати скрізь)", callback_data="reset_cities")])
+    keyboard.append([InlineKeyboardButton(text="🔄 Скинути (шукати скрізь)", callback_data="reset_cities")])
     keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_filters")])
 
-    await callback.message.edit_text("🏙 <b>Оберіть конкретні міста для пошуку:</b>",
+    await callback.message.edit_text("🏙 <b>Міста для пошуку</b>",
                                      reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard), parse_mode="HTML")
 
 
@@ -689,11 +825,11 @@ async def back_to_filters(callback: types.CallbackQuery):
     if not is_authorized(callback.from_user.id):
         return
     session = get_session(callback.from_user.id)
-    await callback.message.edit_text("⚙️ <b>Налаштування фільтрів пошуку:</b>",
+    await callback.message.edit_text("⚙️ <b>Фільтри пошуку</b>",
                                      reply_markup=get_filters_inline_keyboard(session), parse_mode="HTML")
 
 
-@dp.message(F.text == "🚀 Запустити Mass Scan")
+@dp.message(F.text == "🚀 Запустити пошук")
 async def start_search(message: types.Message):
     if not is_authorized(message.from_user.id):
         return
@@ -701,18 +837,18 @@ async def start_search(message: types.Message):
     session = get_session(user_id)
 
     if session["scanning"]:
-        await message.answer("⚠️ Ваш пошук вже працює!")
+        await message.answer("⚠️ Пошук вже працює.")
         return
 
     session["scanning"] = True
     session["task"] = asyncio.create_task(scanner_loop(user_id))
 
     filters = session["filters"]
-    cats = ", ".join([CATEGORIES[c] for c in filters['categories']]) if filters['categories'] else "Усі напрямки"
-    cities = ", ".join(filters['cities']) if filters['cities'] else "Усі міста"
+    cats = ", ".join([CATEGORIES[c] for c in filters['categories']]) if filters['categories'] else "усі напрямки"
+    cities = ", ".join(filters['cities']) if filters['cities'] else "усі міста"
 
     await message.answer(
-        f"✅ <b>Ваш пошук розпочато!</b>\n\n📌 <b>Напрямки:</b> {cats}\n🏙 <b>Міста:</b> {cities}\n💰 <b>Мін. чек:</b> від {filters['min_price']} грн\n\nДжерела: сайти, Instagram, TikTok, Google Maps, фриланс-майданчики.",
+        f"✅ <b>Пошук запущено</b>\n📌 {cats}\n🏙 {cities}\n💰 від {filters['min_price']} грн",
         parse_mode="HTML")
 
 
@@ -722,7 +858,7 @@ async def stop_search(message: types.Message):
         return
     session = get_session(message.from_user.id)
     session["scanning"] = False
-    await message.answer("🛑 Ваш пошук зупинено.")
+    await message.answer("🛑 Пошук зупинено.")
 
 
 async def main():
