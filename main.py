@@ -17,10 +17,11 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 # ==================== КОНФИГУРАЦИЯ ====================
-BOT_TOKEN = "8975688414:AAGUC6Ag9ADN_p7Tb0R9a8xsLEnsFHFkWZM"
-ADMIN_ID = 8543473783
-CHANNEL_ID = "-1004311525622"
-STORE_CHANNEL_ID = "-1004292126045"
+# Configure environment variables; do not hardcode secrets.
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8975688414:AAGUC6Ag9ADN_p7Tb0R9a8xsLEnsFHFkWZM")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "8543473783"))
+CHANNEL_ID = os.getenv("CHANNEL_ID", "-1004311525622")
+STORE_CHANNEL_ID = os.getenv("STORE_CHANNEL_ID", "-1004292126045")
 
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
@@ -2862,6 +2863,9 @@ async def show_order_confirmation(callback: types.CallbackQuery, state: FSMConte
     symbol = method_symbol(method)
 
     promo_code = data.get("promo_code")
+    promo_discount_amount = 0.0
+    promo_owner_commission = 0.0
+    promo_owner_id = None
 
     if promo_code and isinstance(total, (int, float)):
         promo_codes = load_promo_codes()
@@ -2899,8 +2903,9 @@ async def show_order_confirmation(callback: types.CallbackQuery, state: FSMConte
     )
 
     if discount_amount > 0:
-        text += f"🎁 Скидки: -{discount_amount:.2f} {symbol}\n"
-
+        text += f"🎁 Общая скидка: -{discount_amount:.2f} {symbol}\n"
+    if promo_code and isinstance(total, (int, float)):
+        text += f"🎟 Промокод: <code>{promo_code}</code>\n"
     text += f"\nВсё верно?"
 
     try:
@@ -3024,6 +3029,9 @@ async def create_order(source, state: FSMContext):
     symbol = method_symbol(method)
 
     promo_code = data.get("promo_code")
+    promo_discount_amount = 0.0
+    promo_owner_commission = 0.0
+    promo_owner_id = None
 
     if promo_code and isinstance(total, (int, float)):
         promo_codes = load_promo_codes()
@@ -3046,11 +3054,17 @@ async def create_order(source, state: FSMContext):
                     total = total - promo_discount
                     discount_amount += promo_discount
                 elif promo["discount_type"] == "fixed":
-                    promo_discount = min(promo["discount_value"], total)
+                    promo_discount = min(float(promo["discount_value"]), total)
                     total = total - promo_discount
                     discount_amount += promo_discount
 
+                promo_discount_amount = round(float(promo_discount), 2)
+                promo_owner_id = promo.get("owner_id")
+                commission_percent = float(promo.get("commission_percent", 20.0))
+                promo_owner_commission = round(max(float(total), 0) * commission_percent / 100, 2)
                 promo["current_uses"] = promo.get("current_uses", 0) + 1
+                promo["activations"] = promo.get("activations", promo["current_uses"])
+                promo["owner_earned"] = round(float(promo.get("owner_earned", 0)) + promo_owner_commission, 2)
                 promo_codes[promo_code.upper()] = promo
                 save_promo_codes(promo_codes)
 
@@ -3087,6 +3101,9 @@ async def create_order(source, state: FSMContext):
         "total": total,
         "discount_amount": discount_amount,
         "promo_code": promo_code,
+        "promo_discount_amount": promo_discount_amount,
+        "promo_owner_id": promo_owner_id,
+        "promo_owner_commission": promo_owner_commission,
         "status": "awaiting_payment",
         "created_at": datetime.now().isoformat(),
         "phone": None,
@@ -3116,6 +3133,11 @@ async def create_order(source, state: FSMContext):
 
     if discount_amount > 0:
         admin_msg += f"🎁 Скидки: -{discount_amount:.2f} {symbol}\n"
+    if promo_code:
+        admin_msg += (
+            f"🎟 Промокод: {promo_code}\n"
+            f"💸 Комиссия владельца: {promo_owner_commission:.2f} {symbol}\n"
+        )
 
     admin_msg += f"\nСтатус: ⏳ Ожидает оплаты"
 
@@ -3128,6 +3150,23 @@ async def create_order(source, state: FSMContext):
         )
     except Exception as e:
         logger.error(f"Failed to send admin notification: {e}")
+
+    if promo_code:
+        try:
+            promo_notice = (
+                f"🎟 <b>Покупка по промокоду</b>\n"
+                f"Промокод: <code>{promo_code}</code>\n"
+                f"Покупатель: @{username} (ID {user_id})\n"
+                f"Товар: {product} × {quantity}\n"
+                f"Сумма после скидки: {total_display}\n"
+                f"Скидка по промокоду: {promo_discount_amount:.2f} {symbol}\n"
+                f"Комиссия владельца ({float(load_promo_codes().get(promo_code, {}).get('commission_percent', 20)):.1f}%): "
+                f"{promo_owner_commission:.2f} {symbol}\n"
+                f"Владелец ID: {promo_owner_id if promo_owner_id else 'не назначен'}"
+            )
+            await bot.send_message(chat_id=CHANNEL_ID, text=promo_notice, parse_mode="HTML")
+        except Exception as e:
+            logger.error(f"Не удалось отправить уведомление о промокоде: {e}")
 
     requisites = get_requisites(method)
 
@@ -4020,6 +4059,10 @@ async def admin_promo_expires(callback: types.CallbackQuery, state: FSMContext):
         "discount_value": data["discount_value"],
         "max_uses": data["max_uses"],
         "current_uses": 0,
+        "activations": 0,
+        "owner_earned": 0.0,
+        "commission_percent": 20.0,
+        "owner_id": None,
         "expires_at": expires_at,
         "is_active": True,
         "created_at": datetime.now().isoformat(),
@@ -4074,6 +4117,9 @@ async def admin_promo_code_detail(callback: types.CallbackQuery):
         f"🎟 <b>Промокод {code}</b>\n"
         f"💰 Скидка: {discount_desc}\n"
         f"<b>Статус:</b> {status}\n"
+        f"🔢 Активаций: {promo.get('activations', promo.get('current_uses', 0))}\n"
+        f"💸 Заработано владельцем: {float(promo.get('owner_earned', 0)):.2f} грн\n"
+        f"📈 Комиссия владельца: {float(promo.get('commission_percent', 20)):.1f}% от суммы после скидки\n"
         f"🔢 Использований: {uses_text}\n"
     )
 
@@ -5066,6 +5112,10 @@ async def auto_broadcast_scheduler():
 
 # ==================== ЗАПУСК ====================
 async def main():
+    if not BOT_TOKEN:
+        raise RuntimeError("Не задан BOT_TOKEN. Укажите токен через переменную окружения BOT_TOKEN.")
+    if not ADMIN_ID:
+        raise RuntimeError("Не задан ADMIN_ID. Укажите Telegram ID администратора через переменную окружения ADMIN_ID.")
     print("=" * 50)
     print("OverPass Store Bot")
     print("Баланс удалён, реферальные бонусы выдаются промокодами")
